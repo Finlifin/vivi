@@ -1,0 +1,13 @@
+div {
+    h1 { "Hello, World!" },
+    p { "This is a paragraph." },
+    
+    .id "main_container",
+    .class "text-lg m-auto text-center p-4",
+    .style {
+        .background "#f0f0f0",
+        .color "#333",
+        .border "1px solid #ccc",
+    },
+}
+

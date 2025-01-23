@@ -1,0 +1,468 @@
+issues:
+    三个handler的省略
+        如果下一个token不是 { 或者k_use, return
+    分号的省略
+        给每种token分类，
+            某些token不可能出现在第一个非空字符，此token将前一个'\n'转换为';'
+            某些token不可能出现在最后一个非空字符，此token将后一个'\n'转换为';'
+    宏的lexing
+        遇到'时，向前扫描(忽略空格), 见到'{'则开始宏，并维护一个{}的栈, 直到栈为空结束
+        否则尝试lex为char
+        否则为单个 '
+
+
+
+naive -> 
+    id
+    | str
+    | int
+    | real
+    | bool
+    | null
+    | char
+    | any
+    | void
+    | _
+
+do_block -> 
+    do block
+
+not -> 
+    not prefix
+
+new_call -> 
+    new arguments
+
+lambda ->
+    | pattern* | return_type? (expr | block)
+
+object -> 
+    { argument* }
+
+quote ->
+    (expr)
+
+tuple ->
+    (expr*)
+
+list ->
+    [ expr* ]
+
+pattern_expr ->
+    < pattern >
+
+struct_expr ->
+    struct clauses? struct_def
+
+impl_expr ->
+    impl expr (for expr)? clauses? impl_def
+
+enum_expr ->
+    enum clauses? enum_def
+
+union_expr -> 
+    union clauses? union_def
+
+mod_expr ->
+    mod mod_def
+
+fn_expr ->
+    fn parameters? return_type? clauses block
+
+effect_expr -> 
+    effect parameters? return_type? clauses block
+
+handler_expr -> 
+    handle error? expr clauses? block
+
+if_expr ->
+    if expr block else?
+
+if_is_expr ->
+    if expr is pattern block else?
+
+if_is_match_expr ->
+    if expr is { match_branch* }
+
+when_expr ->
+    when expr { when_branch* }
+
+
+
+fn_type_expr ->
+    fn parameters? return_type?
+
+effect_type_expr -> 
+    effect parameters? return_type?
+
+effectfied -> 
+    #expr expr
+
+errorfied -> 
+    !expr expr
+
+optional_type -> 
+    ?expr
+
+range_all -> 
+    ..
+
+range_from -> 
+    expr ..
+
+range_to ->
+    .. expr
+
+range_from_eq -> 
+    ..= expr
+
+range_from_to -> 
+    expr .. expr
+
+range_from_to_eq -> 
+    expr ..= expr
+
+range ->
+    range_all
+    | range_from
+    | range_to
+    | range_from_eq
+    | range_from_to
+    | range_from_to_eq
+
+pattern_expr -> 
+    < pattern >
+
+return_expr ->
+    return expr (if expr)?
+
+prefix -> 
+    naive
+    | do_block
+    | not
+    | lambda
+    | object
+    | tuple
+    | quote
+    | list
+    | pattern_expr
+    | impl_expr
+    | struct_expr
+    | enum_expr
+    | union_expr
+    | mod_expr
+    | fn_expr
+    | if_expr
+    | if_is_expr
+    | if_is_match_expr
+    | when_expr
+    | fn_type_expr
+    | return_expr
+
+
+add -> expr + expr
+sub -> expr - expr
+mul -> expr * expr
+div -> expr / expr
+mod -> expr % expr
+and -> expr and expr
+or -> expr or expr
+matches -> expr matches expr
+match -> expr match pattern_block 
+pipe -> expr | expr
+select -> expr . id
+image -> expr ' id
+type_judge -> expr : expr
+type_cast -> expr as expr
+trait_judge -> expr :- expr
+index -> expr [ argument* ]
+call -> expr arguments .async?
+tcall -> expr < argument* >
+bcall -> expr { argument* }
+macro_call -> expr ' {  }
+curry_call -> expr ' (  )
+
+error_handlers ->
+    { (match_branch | catch lambda)* }
+
+handle_error -> 
+    expr ! error_handlers?
+    | expr ! use expr
+
+effect_handlers ->
+    { match_branch* }
+
+handle_effect -> 
+    expr # effect_handlers?
+    | expr # use expr
+
+handle_null ->
+    expr ? block?
+
+
+infix -> 
+    add
+    | sub
+    | mul
+    | div
+    | mod
+    | and
+    | or
+    | matches
+    | pipe
+    | select
+    | image
+    | type_judge
+    | type_cast
+    | trait_judge
+    | index
+    | call
+    | tcall
+    | bcall
+    | macro_call
+    | curry_call
+    | handle_error
+    | handle_null
+    | handle_effect 
+
+expr ->
+    prefix
+    | infix
+
+
+
+
+
+use_term ->
+    id
+    | use_term . * 
+    | use_term . id
+    | use_term as id
+    | (.)+ use_term
+    | use_term . { use_term* }
+    | @ use_term
+
+stmt_use ->
+    pub? use use_term
+
+
+
+naive_pattern ->
+    id
+    | _
+    | str
+    | symbol
+    | int
+    | real
+    | bool
+    | null
+    | char
+
+not_pattern -> 
+    not prefix_pattern
+
+object_pattern -> 
+    { (id: pattern | id) }
+
+tuple_pattern ->
+    (pattern*)
+
+call_pattern ->
+    id arguments
+
+symbol_object_pattern ->
+    symbol { (id: pattern | id) }
+
+symbol_tuple_pattern ->
+    symbol (pattern*)
+
+list_pattern ->
+    [ pattern* ]
+
+pattern_expr_lift ->
+    < pattern >
+
+pattern_to ->  
+    pattern ..
+
+prefix_pattern ->
+    naive_pattern
+    | not_pattern
+    | object_pattern
+    | tuple_pattern
+    | call_pattern
+    | symbol_object_pattern
+    | symbol_tuple_pattern
+    | list_pattern
+    | pattern_expr_lift
+    | range_to
+    | range_to_eq
+
+pattern_or ->
+    pattern or pattern
+
+pattern_and ->
+    pattern and pattern
+
+pattern_select ->
+    pattern . id
+
+pattern_select_all ->
+    pattern . *
+
+pattern_bind ->
+    pattern as id
+
+optional_some ->
+    id ?
+
+pattern_from ->
+    pattern ..
+
+pattern_from_to ->
+    pattern .. pattern
+
+pattern_from_to_eq ->
+    pattern ..= pattern
+
+infix_pattern -> 
+    or
+    | and
+    | pattern_select
+    | pattern_select_all
+    | pattern_bind
+    | optional_some
+    | range_from
+    | range_from_to
+    | range_from_to_eq
+
+
+
+pattern ->
+    prefix_pattern
+    | infix_pattern
+
+
+
+
+struct_field -> 
+    id : expr (= expr)?
+
+constructor -> 
+    new parameters block
+
+struct_def -> 
+    { (stmt | definition | struct_field | property | constructor)* }
+
+enum_variant ->
+    id parameters
+    | id { struct_field* }
+    | id . { enum_variant* }
+    | id = expr
+
+enum_def -> 
+    { (stmt | definition | enum_variant | property | constructor)* }
+
+union_variant ->
+    id { struct_field* }
+
+union_def -> 
+    { (stmt | definition | union_variant | property | constructor)* }
+
+mod_def -> 
+    { (stmt | definition | property)* }
+
+definition ->
+    pub? struct id clauses? struct_def
+    | pub? enum id clauses? enum_def
+    | pub? union id clauses? union_def
+    | pub? mod id mod_def
+    | pub? pure? fn id parameters? return_type? clauses block
+
+
+
+stmt_assign -> 
+    const pattern = expr
+    | let pattern = expr
+
+stmt_asserts -> 
+    asserts expr
+
+stmt_break -> 
+    break symbol?
+
+stmt_continue ->
+    continue symbol?
+
+while_is ->
+    while expr is pattern block
+
+for_stmt -> 
+    for pattern in expr block
+
+while_is_match ->
+    while expr is { match_branch* }
+
+when_branch ->
+    expr => block | expr
+
+when_stmt -> 
+    when expr { when_branch* }
+
+
+stmt -> 
+    stmt_assign ;
+    | stmt_use ;
+    | stmt_asserts ;
+    | stmt_break ;
+    | stmt_continue ;
+    | if_expr
+    | if_is_expr
+    | if_is_match_expr
+    | while_is
+    | for_stmt
+    | while_is_match
+    | expr ;
+    | block
+    | when_stmt
+    | defer_stmt
+
+defer_stmt -> 
+    defer stmt
+
+clauses -> 
+    where { (id | id: expr | id:- expr | id = expr | requires expr | ensures expr) }
+
+property -> 
+    symbol expr
+
+parameters ->
+    (parameter*)
+
+parameter ->
+    id
+    | id :- expr
+    | pattern : expr
+    | .id : expr = default
+    | ..id : Type
+
+arguments ->
+    (argument*)
+
+argument ->
+    property
+    | .. expr
+    | expr
+
+block -> 
+    { (property | stmt)* expr? }
+
+comment ->
+    -- any
+    | {- any -}
+
+attribute -> 
+    ^expr wtf
+
+match_branch ->
+    pattern => block | expr

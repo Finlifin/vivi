@@ -1,0 +1,404 @@
+naive -> 
+    id
+    | str
+    | int
+    | real
+    | bool
+    | null
+    | char
+    | any
+    | void
+    | _
+
+do_block -> 
+    do block
+
+not -> 
+    not prefix
+
+new_call -> 
+    new arguments
+
+lambda ->
+    | pattern* | return_type? (expr | block)
+
+object -> 
+    { argument* }
+
+paren ->
+    (expr)
+
+tuple ->
+    (expr*)
+
+list ->
+    [ expr* ]
+
+pattern_expr ->
+    < pattern >
+
+struct_expr ->
+    struct clauses? struct_def
+
+enum_expr ->
+    enum clauses? enum_def
+
+union_expr -> 
+    union clauses? union_def
+
+mod_expr ->
+    mod mod_def
+
+fn_expr ->
+    fn parameters? return_type? clauses block
+
+effect_expr -> 
+    effect parameters? return_type? clauses block
+
+handler_expr -> 
+    handle error? expr clauses? block
+
+if_expr ->
+    if expr block else?
+
+if_is_expr ->
+    if expr is pattern block else?
+
+fn_type_expr ->
+    fn parameters? return_type?
+
+effect_type_expr -> 
+    effect parameters? return_type?
+
+effectfied -> 
+    #expr expr
+
+errorfied -> 
+    !expr expr
+
+optional_type -> 
+    ?expr
+
+range_all -> 
+    ..
+
+range_from -> 
+    expr ..
+
+range_to ->
+    .. expr
+
+range_from_eq -> 
+    ..= expr
+
+range_from_to -> 
+    expr .. expr
+
+range_from_to_eq -> 
+    expr ..= expr
+
+range ->
+    range_all
+    | range_from
+    | range_to
+    | range_from_eq
+    | range_from_to
+    | range_from_to_eq
+
+
+return_expr ->
+    return expr
+
+prefix -> 
+    naive
+    | do_block
+    | not
+    | lambda
+    | object
+    | tuple
+    | list
+    | pattern
+    | struct_expr
+    | enum_expr
+    | union_expr
+    | fn_expr
+    | if_expr
+    | if_is_expr
+    | fn_type_expr
+    | mod_expr
+    | return_expr
+
+
+add -> expr + expr
+sub -> expr - expr
+mul -> expr * expr
+div -> expr / expr
+mod -> expr % expr
+and -> expr and expr
+or -> expr or expr
+matches -> expr matches expr
+match -> expr match pattern_block 
+pipe -> expr | expr
+select -> expr . id
+image -> expr ' id
+type_judge -> expr : expr
+type_cast -> expr as expr
+trait_judge -> expr :- expr
+index -> expr [ argument* ]
+call -> expr arguments .async?
+tcall -> expr < argument* >
+bcall -> expr { argument* }
+macro_call -> expr ' {  }
+curry_call -> expr ' (  )
+
+handle_error -> 
+    expr ! error_handler?
+    | expr ! use expr
+
+handle_effect -> 
+    expr # effect_handler?
+    | expr # use expr
+
+handle_null ->
+    expr ? null_handler?
+    | expr ? use expr
+
+
+infix -> 
+    add
+    | sub
+    | mul
+    | div
+    | mod
+    | and
+    | or
+    | matches
+    | pipe
+    | select
+    | image
+    | type_judge
+    | type_cast
+    | trait_judge
+    | index
+    | call
+    | tcall
+    | bcall
+    | macro_call
+    | curry_call
+    | handle_error
+    | handle_null
+    | handle_effect 
+
+expr ->
+    prefix
+    | infix
+
+
+
+
+
+use_term ->
+    id
+    | use_term . * 
+    | use_term . id
+    | use_term as id
+    | (.)+ use_term
+    | use_term . { use_term* }
+    | @ use_term
+
+stmt_use ->
+    pub? use use_term
+
+
+
+naive_pattern ->
+    id
+    | _
+    | str
+    | symbol
+    | int
+    | real
+    | bool
+    | null
+    | char
+
+not_pattern -> 
+    not prefix_pattern
+
+object_pattern -> 
+    { (id: pattern | id) }
+
+tuple_pattern ->
+    (pattern*)
+
+call_pattern ->
+    id arguments
+
+symbol_object_pattern ->
+    symbol { (id: pattern | id) }
+
+symbol_tuple_pattern ->
+    symbol (pattern*)
+
+list_pattern ->
+    [ pattern* ]
+
+pattern_expr_lift ->
+    < pattern >
+
+pattern_to ->  
+    pattern ..
+
+prefix_pattern ->
+    naive_pattern
+    | not_pattern
+    | object_pattern
+    | tuple_pattern
+    | call_pattern
+    | symbol_object_pattern
+    | symbol_tuple_pattern
+    | list_pattern
+    | pattern_expr_lift
+    | range_to
+    | range_to_eq
+
+pattern_or ->
+    pattern or pattern
+
+pattern_and ->
+    pattern and pattern
+
+pattern_select ->
+    pattern . id
+
+pattern_select_all ->
+    pattern . *
+
+pattern_bind ->
+    pattern as id
+
+optional_some ->
+    id ?
+
+pattern_from ->
+    pattern ..
+
+pattern_from_to ->
+    pattern .. pattern
+
+pattern_from_to_eq ->
+    pattern ..= pattern
+
+infix_pattern -> 
+    or
+    | and
+    | pattern_select
+    | pattern_select_all
+    | pattern_bind
+    | optional_some
+    | range_from
+    | range_from_to
+    | range_from_to_eq
+
+
+
+pattern ->
+    prefix_pattern
+    | infix_pattern
+
+
+
+
+struct_field -> 
+    id : expr (= expr)?
+
+constructor -> 
+    new parameters block
+
+struct_def -> 
+    { (stmt | definition | struct_field | property | constructor)* }
+
+enum_variant ->
+    id parameters
+    | id { struct_field* }
+    | id . { enum_variant* }
+    | id = expr
+
+enum_def -> 
+    { (stmt | definition | enum_variant | property | constructor)* }
+
+union_variant ->
+    id { struct_field* }
+
+union_def -> 
+    { (stmt | definition | union_variant | property | constructor)* }
+
+mod_def -> 
+    { (stmt | definition | property)* }
+
+definition ->
+    pub? struct id clauses? struct_def
+    | pub? enum id clauses? enum_def
+    | pub? union id clauses? union_def
+    | pub? mod id mod_def
+    | pub? pure? fn id parameters? return_type? clauses block
+
+
+
+stmt_assign -> 
+    const pattern = expr
+    | let pattern = expr
+
+stmt_asserts -> 
+    asserts expr
+
+stmt_break -> 
+    break symbol?
+
+stmt_continue ->
+    continue symbol?
+
+
+stmt -> 
+    stmt_assign
+    | stmt_use
+    | stmt_asserts
+    | stmt_break
+    | stmt_continue
+    | expr
+
+
+clauses -> 
+    where { (id | id: expr | id:- expr | id = expr | requires expr | ensures expr) }
+
+
+
+property -> 
+    symbol expr
+
+parameters ->
+    (parameter*)
+
+parameter ->
+    id
+    | id :- expr
+    | pattern : expr
+    | .id : expr = default
+    | ..id : Type
+
+arguments ->
+    (argument*)
+
+argument ->
+    .id expr
+    | expr
+
+block -> 
+    { (property | stmt)* }
+
+comment ->
+    -- any
+    | {- any -}
+
+attribute -> 
+    ^expr wtf

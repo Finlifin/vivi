@@ -1,0 +1,5 @@
+mod mem {
+    trait Allocator {}
+    struct Heap {}
+    impl Allocator for Heap {}
+}

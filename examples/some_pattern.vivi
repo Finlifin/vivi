@@ -1,0 +1,12 @@
+{
+    sequence: [1, 1..=10, 20..=30, ...rest],
+    data: .single_key {
+        key: 'v' or 'p',
+        hold_time: 0..=255,
+        shift: false,
+        ctrl: true,
+        alt: true,
+    }
+}
+
+-- alright

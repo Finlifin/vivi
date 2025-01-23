@@ -1,0 +1,16 @@
+Form {
+    Input {
+        .default_value "Enter your email...",
+        .type "email",
+        .name "email",
+    },
+    Input {
+        .default_value "Enter your password...",
+        .type "password",
+        .name "password",
+    },
+    Button {
+        .text "Login",
+        .type "submit",
+    },
+}
