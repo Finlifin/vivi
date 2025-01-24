@@ -18,6 +18,9 @@ pub fn errorMsg(code: GlobalErr) ?[]const u8 {
         .FileNotFound => "file not found",
 
         .AllocationFailed => "allocation failed",
+        .OutOfArenaMemory => "out of arena memory",
+        .OutOfGpaMemory => "out of gpa memory",
+        .OutOfObjectLimit => "out of object limit",
         .SrcIdNotFound => "source id not found",
 
         .UnknownErr => "unknown error",
@@ -50,8 +53,11 @@ pub const GlobalErr = enum(u32) {
     FileNotFound = 30_000_001,
 
     AllocationFailed = 40_000_001,
-    SrcIdNotFound = 40_000_002,
-    Unimplemented = 40_000_003,
+    OutOfArenaMemory = 40_000_002,
+    OutOfGpaMemory = 40_000_003,
+    OutOfObjectLimit = 40_000_004,
+    SrcIdNotFound = 40_000_005,
+    Unimplemented = 40_000_006,
 
     UnknownErr = 50_000_001,
 

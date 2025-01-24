@@ -323,7 +323,6 @@ pub const Lexer = struct {
     fn recognizeMultiLineStr() void {}
     fn recognizeComment() void {}
 
-    // BUG: `some`，当`为最后一个字符时，len不包括其在内
     fn recognizeId(self: *Self) Token {
         const b = self.src;
         const old_cursor = self.cursor;
