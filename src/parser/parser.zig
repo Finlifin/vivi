@@ -13,6 +13,12 @@ const basic = @import("basic.zig");
 // an ast is flatten buffer of nodes
 // if buf[i] == .int, then buf[i+1] is the main token
 
+const Span = struct {
+    node: u64,
+    from: u64,
+    to: u64,
+};
+
 pub const Parser = struct {
     alc: std.mem.Allocator,
     tmp_alc: std.heap.FixedBufferAllocator,
@@ -22,12 +28,14 @@ pub const Parser = struct {
     src_id: u32,
     vfs: *vfs.Vfs,
     tokens: std.ArrayList(lexer.Token),
-    nodes: Vec(u64),
+    nodes: std.ArrayList(u64),
     valid_nodes_len: u64,
     // for debug
-    tags: Vec(ast.Tag),
-    tags_location: Vec(u64),
-    lcursor: u64,
+    tags: std.ArrayList(ast.Tag),
+    tags_location: std.ArrayList(u64),
+
+    spans: std.ArrayList(Span),
+    lcursors: std.ArrayList(u64),
     rcursor: u64,
 
     option: ParserSetting,
@@ -46,7 +54,9 @@ pub const Parser = struct {
         result.src = src;
         result.src_id = src_id;
         result.alc = alc;
-        result.lcursor = 0;
+        result.spans = std.ArrayList(Span).init(alc);
+        result.lcursors = std.ArrayList(u64).init(alc);
+        result.lcursors.append(0) catch @panic("lcursors init failed");
         result.rcursor = 0;
         result.tokens = try lexer.lex(alc, src);
         result.tmp = try alc.alloc(u8, 1024 * 1024);
@@ -73,9 +83,10 @@ pub const Parser = struct {
     };
     pub fn push(self: *Parser, item: u64, kind: NodeKind) Err!u64 {
         try self.nodes.append(item);
-        if (kind == .tag and self.option.mode == .debug) {
-            self.tags.append(@enumFromInt(item)) catch return Err.OutOfMemory;
-            self.tags_location.append(self.nodes.items.len) catch return Err.OutOfMemory;
+        if (kind == .tag) {
+            try self.tags.append(@enumFromInt(item));
+            try self.tags_location.append(self.nodes.items.len);
+            try self.pushSpan(self.nodes.items.len - 1);
         }
         return self.nodes.items.len - 1;
     }
@@ -112,12 +123,20 @@ pub const Parser = struct {
                     _ = try self.push(node[2], .child);
                 }
             },
-            // three children
+            // three children or two left and multiple children
             4 => {
                 result = try self.push(@intFromEnum(node[0]), .tag);
-                _ = try self.push(node[1], .child);
-                _ = try self.push(node[2], .child);
-                _ = try self.push(node[3], .child);
+                if (@TypeOf(node[3]) == []u64) {
+                    _ = try self.push(node[1], .child);
+                    _ = try self.push(node[2], .child);
+                    const len = node[3].len;
+                    _ = try self.push(len, .len);
+                    try self.nodes.appendSlice(node[3]);
+                } else {
+                    _ = try self.push(node[1], .child);
+                    _ = try self.push(node[2], .child);
+                    _ = try self.push(node[3], .child);
+                }
             },
             // for lambda
             5 => {
@@ -157,37 +176,82 @@ pub const Parser = struct {
         return result;
     }
 
-    pub fn sync(self: *Parser) void {
-        self.valid_nodes_len = self.nodes.items.len;
-        self.lcursor = self.rcursor;
+    // pub fn sync(self: *Parser) void {
+    //     self.valid_nodes_len = self.nodes.items.len;
+    //     self.lcursor = self.rcursor;
+    // }
+
+    // pub fn fallback(self: *Parser) void {
+    //     self.nodes.items = self.nodes.items[0..self.valid_nodes_len];
+    //     self.rcursor = self.lcursor;
+    // }
+
+    pub fn enter(self: *Parser) Err!void {
+        try self.lcursors.append(self.rcursor);
     }
 
-    pub fn fallback(self: *Parser) void {
-        self.nodes.items = self.nodes.items[0..self.valid_nodes_len];
-        self.rcursor = self.lcursor;
+    pub fn exit(self: *Parser) void {
+        _ = self.lcursors.pop();
     }
 
-    pub fn pushRaw(self: *Parser, tag: ast.Tag) Err!u64 {
+    pub fn pushSpanAndExit(self: *Parser) void {
+        self.exit();
+    }
+
+    pub fn lCursorTop(self: *Parser) u64 {
+        return self.lcursors.items[self.lcursors.items.len - 1];
+    }
+
+    pub fn pushSpan(self: *Parser, node: u64) Err!void {
+        const from = self.lCursorTop();
+        const to = self.rcursor;
+        try self.spans.append(Span{ .node = node, .from = from + 1, .to = to });
+    }
+
+    // binary search
+    pub fn getSpan(self: *Parser, node: u64) ?Span {
+        if (node == 0 or node >= self.nodes.items.len) return null;
+
+        var left: u64 = 0;
+        var right: u64 = self.spans.items.len;
+        while (left < right) {
+            const mid = left + (right - left) / 2;
+            const span = self.spans.items[mid];
+            if (span.node == node) return span;
+            if (span.node < node) {
+                left = mid + 1;
+            } else {
+                right = mid;
+            }
+        }
+        return null;
+    }
+
+    // push atom
+    pub fn pushAtom(self: *Parser, tag: ast.Tag) Err!u64 {
         _ = self.nextToken();
         const result = try self.push(@intFromEnum(tag), .tag);
         _ = try self.push(self.rcursor, .token_index);
-        // dbg
-        // std.debug.print("pushRaw: {s}\n", .{@tagName(tag)});
         return result;
     }
 
-    pub fn pExpr(self: *Parser) Err!u64 {
-        const result = try expr.pExpr(self, .{});
+    // bro has three tokens
+    pub fn pushReal(self: *Parser) Err!u64 {
+        self.eatTokens(3);
 
-        return result;
+        return try self.pushNode(.{ ast.Tag.real, self.rcursor - 2, self.rcursor });
     }
 
-    pub fn pPattern(self: *Parser) Err!u64 {
-        return pattern.pPattern(self, .{});
+    pub fn tryExpr(self: *Parser) Err!u64 {
+        return try expr.tryExpr(self, .{});
     }
 
-    pub fn pStmt(self: *Parser) Err!u64 {
-        return stmt.pStmt(self);
+    pub fn tryPattern(self: *Parser) Err!u64 {
+        return pattern.tryPattern(self, .{});
+    }
+
+    pub fn tryStmt(self: *Parser) Err!u64 {
+        return stmt.tryStmt(self);
     }
 
     pub fn parse(self: *Parser) u64 {
@@ -225,6 +289,10 @@ pub const Parser = struct {
         }
         self.rcursor += 1;
         return true;
+    }
+
+    pub fn eatTokens(self: *Parser, count: u64) void {
+        self.rcursor += count;
     }
 
     pub fn srcContent(self: Parser, token: lexer.Token) []const u8 {
@@ -276,6 +344,8 @@ pub const Parser = struct {
     }
 
     pub fn deinit(self: *Parser) void {
+        self.lcursors.deinit();
+        self.spans.deinit();
         self.tokens.deinit();
         self.nodes.deinit();
         self.alc.free(self.tmp);
@@ -302,7 +372,6 @@ pub const Parser = struct {
             .id,
             .bool,
             .char,
-            .symbol,
             => {
                 const token = self.getToken(self.getNode(node_index + 1));
                 try writer.writeAll(self.srcContent(token));
@@ -310,10 +379,11 @@ pub const Parser = struct {
             // with multiple tokens
             .real => {
                 const left = self.getToken(self.getNode(node_index + 1));
-                const right = self.getToken(self.getNode(node_index + 1) + 2);
+                const right = self.getToken(self.getNode(node_index + 2));
                 try writer.print("{s}.{s}", .{ self.srcContent(left), self.srcContent(right) });
             },
             // with single child
+            .symbol,
             .do_block,
             .quote,
             .bool_not,
@@ -389,6 +459,8 @@ pub const Parser = struct {
             .enum_variant_with_value,
             .while_is_match_loop,
             .mod_def,
+            .trait_bound_clause,
+            .optional_trait_bound_clause,
             .@"id : pattern",
             .@"..id: expr",
             .@"pattern : expr",
@@ -429,13 +501,23 @@ pub const Parser = struct {
             .pattern_call,
             .object_pattern_call,
             .select_multi,
-            .derivation,
             => {
                 try self.dump(self.getNode(node_index + 1), writer);
                 const len = self.getNode(node_index + 2);
                 try writer.print("(len {d}) ", .{len});
                 for (0..len) |i| {
                     try self.dump(self.getNode(node_index + 3 + i), writer);
+                }
+            },
+            // two left items and multiple children
+            .derivation,
+            => {
+                try self.dump(self.getNode(node_index + 1), writer);
+                try self.dump(self.getNode(node_index + 2), writer);
+                const len = self.getNode(node_index + 3);
+                try writer.print("(len {d}) ", .{len});
+                for (0..len) |i| {
+                    try self.dump(self.getNode(node_index + 4 + i), writer);
                 }
             },
             // three children!

@@ -117,8 +117,6 @@ pub const Gc = struct {
                     std.debug.print("ERROR: Gc.objects.remove(obj) obj not exist!\n", .{});
             }
         }
-
-        std.debug.print("DEBUG: object count after gc {any}\n", .{self.object_count});
     }
 
     pub fn newDigit(self: *Gc, comptime digit_type: type, value: digit_type) Err![*]u8 {

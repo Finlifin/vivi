@@ -145,6 +145,8 @@ pub const Tag = enum(u64) {
 
     clauses,
     clause,
+    trait_bound_clause,
+    optional_trait_bound_clause,
     enum_def,
     enum_def_body,
     enum_variant,

@@ -19,8 +19,9 @@ const OpInfo = struct {
     assoc_left: bool = true,
 };
 
-pub fn pPattern(self: *Parser, opt: Options) Err!u64 {
-    return pPratt(self, 0, opt);
+pub fn tryPattern(self: *Parser, opt: Options) Err!u64 {
+    return tryPratt(self, 0, opt);
+    // return tryPrefixPattern(self, opt);
 }
 
 const op_table = std.enums.directEnumArrayDefault(
@@ -45,8 +46,11 @@ const op_table = std.enums.directEnumArrayDefault(
     },
 );
 
-fn pPratt(self: *Parser, min_prec: i8, opt: Options) Err!u64 {
-    var left = try pPrefixPattern(self, opt);
+fn tryPratt(self: *Parser, min_prec: i8, opt: Options) Err!u64 {
+    try self.enter();
+    defer self.exit();
+
+    var left = try tryPrefixPattern(self, opt);
     if (left == 0) {
         return 0;
     }
@@ -60,19 +64,15 @@ fn pPratt(self: *Parser, min_prec: i8, opt: Options) Err!u64 {
 
         switch (token.tag) {
             .@"?" => {
-                _ = self.nextToken();
+                self.eatTokens(1);
                 left = try self.pushNode(.{ Tag.@"id?", left });
                 continue;
             },
             .@"(" => {
                 const rules = .{
-                    basic.rule("pattern", Parser.pPattern),
+                    basic.rule("pattern", Parser.tryPattern),
                 };
-                const nodes = try basic.pMulti(
-                    self,
-                    rules,
-                    .@"(",
-                );
+                const nodes = try basic.pMulti(self, rules, .@"(");
                 defer nodes.deinit();
                 left = try self.pushNode(.{ Tag.pattern_call, left, nodes.items });
                 continue;
@@ -84,11 +84,7 @@ fn pPratt(self: *Parser, min_prec: i8, opt: Options) Err!u64 {
                     basic.rule("id binding", basic.tryId),
                 };
 
-                const nodes = try basic.pMulti(
-                    self,
-                    rules,
-                    .@"{",
-                );
+                const nodes = try basic.pMulti(self, rules, .@"{");
                 defer nodes.deinit();
                 left = try self.pushNode(.{ Tag.object_pattern_call, left, nodes.items });
                 continue;
@@ -102,7 +98,7 @@ fn pPratt(self: *Parser, min_prec: i8, opt: Options) Err!u64 {
                 }
 
                 if (self.peek(&.{.id})) {
-                    const id = try self.pushRaw(.id);
+                    const id = try self.pushAtom(.id);
                     left = try self.pushNode(.{ Tag.select, left, id });
                     continue;
                 }
@@ -114,36 +110,36 @@ fn pPratt(self: *Parser, min_prec: i8, opt: Options) Err!u64 {
                     }
 
                     const tag = if (self.eatToken(.@"=")) Tag.range_from_to_inclusive else Tag.range_from_to;
-                    const pattern = try pPrefixPattern(self, .{});
+                    const pattern = try tryPrefixPattern(self, .{});
 
                     left = try self.pushNode(.{ tag, left, pattern });
                     continue;
                 }
 
-                return self.invalidPattern(self.lcursor, self.rcursor, "unable to recognize this pattern😢");
+                return self.invalidPattern(self.rcursor, self.rcursor, "unable to recognize this pattern😢");
             },
             // pattern and expr is pattern
             .k_and => {
                 _ = self.nextToken();
-                const expr = try self.pExpr();
+                const expr = try self.tryExpr();
                 try self.expectNextToken(.k_is, "expect a `is` to specify the pattern");
-                const pattern = try pPratt(self, op_info.prec + 1, .{});
+                const pattern = try tryPratt(self, op_info.prec + 1, .{});
 
                 left = try self.pushNode(.{ Tag.and_is, left, expr, pattern });
                 continue;
             },
             .k_if => {
                 _ = self.nextToken();
-                const expr = try self.pExpr();
+                const expr = try self.tryExpr();
 
                 left = try self.pushNode(.{ Tag.if_guard, left, expr });
                 continue;
             },
             else => {},
         }
-        _ = self.nextToken();
 
-        const right = try pPratt(self, op_info.prec + 1, .{});
+        self.eatTokens(1);
+        const right = try tryPratt(self, op_info.prec + 1, .{});
         if (right == 0) {
             return self.unexpectedToken("expect a pattern");
         }
@@ -157,157 +153,177 @@ fn pPratt(self: *Parser, min_prec: i8, opt: Options) Err!u64 {
     return left;
 }
 
-fn pPrefixPattern(self: *Parser, _: Options) Err!u64 {
-    errdefer self.fallback();
+fn tryPrefixPattern(self: *Parser, _: Options) Err!u64 {
+    try self.enter();
+    defer self.exit();
     const token = self.peekToken();
     return switch (token.tag) {
-        .id => try self.pushRaw(.id),
-        .int => try expr_module.pDigit(self),
-        .str => try self.pushRaw(.str),
-        .char => try self.pushRaw(.char),
-        .k_true => try self.pushRaw(.bool),
-        .k_false => try self.pushRaw(.bool),
-        .k_null => try self.pushRaw(.null),
-        .k_void => try self.pushRaw(.void),
-        .k_noreturn => try self.pushRaw(.noreturn),
-        .k_Any => try self.pushRaw(.Any),
-        .k_any => try self.pushRaw(.any),
-        .k_unit => try self.pushRaw(.unit),
+        .id => try self.pushAtom(.id),
+        .int => try expr_module.tryDigit(self),
+        .str => try self.pushAtom(.str),
+        .char => try self.pushAtom(.char),
+        .k_true => try self.pushAtom(.bool),
+        .k_false => try self.pushAtom(.bool),
+        .k_null => try self.pushAtom(.null),
+        // .k_void => try self.pushAtom(.void),
+        // .k_noreturn => try self.pushAtom(.noreturn),
+        // .k_Any => try self.pushAtom(.Any),
+        // .k_any => try self.pushAtom(.any),
+        // .k_unit => try self.pushAtom(.unit),
 
-        .@"." => try pRangeOrSymbol(self),
+        .@"." => try tryRangeOrSymbol(self),
 
-        .@"(" => try pTuplePattern(self),
-        .@"{" => try pObjectPattern(self),
-        .@"[" => try pListPattern(self),
-        .@"<" => try pExprPattern(self),
+        .@"(" => try tryTuplePattern(self),
+        .@"{" => try tryObjectPattern(self),
+        .@"[" => try tryListPattern(self),
+        .@"<" => try tryExprPattern(self),
 
-        else => return self.invalidPattern(self.lcursor, self.rcursor + 1, "I don't know how to parse this pattern😢"),
+        else => 0,
     };
 }
 
 fn tryObjectFieldPattern(self: *Parser) Err!u64 {
-    if (!self.peek(&.{ .id, .@":" }))
-        return 0;
-    const id = try self.pushRaw(.id);
-    _ = self.nextToken();
+    try self.enter();
+    defer self.exit();
 
-    return try self.pushNode(.{ Tag.@"id : pattern", id, try self.pPattern() });
+    if (!self.peek(&.{ .id, .@":" })) return 0;
+    const id = try basic.tryId(self);
+    self.eatTokens(1);
+
+    return try self.pushNode(.{ Tag.@"id : pattern", id, try self.tryPattern() });
 }
 
-fn pTuplePattern(self: *Parser) Err!u64 {
+fn tryTuplePattern(self: *Parser) Err!u64 {
+    try self.enter();
+    defer self.exit();
+    if (!self.peek(&.{.@"("}))
+        return 0;
+
     const rules = .{
-        basic.rule("pattern", Parser.pPattern),
+        basic.rule("pattern", Parser.tryPattern),
     };
-    const nodes = try basic.pMulti(
-        self,
-        rules,
-        .@"(",
-    );
+    const nodes = try basic.pMulti(self, rules, .@"(");
     defer nodes.deinit();
     return try self.pushNode(.{ Tag.tuple_pattern, nodes.items });
 }
 
-fn pObjectPattern(self: *Parser) Err!u64 {
+fn tryObjectPattern(self: *Parser) Err!u64 {
+    try self.enter();
+    defer self.exit();
+    if (!self.peek(&.{.@"{"}))
+        return 0;
+
     const rules = .{
         basic.rule("object field pattern", tryObjectFieldPattern),
         basic.rule("id binding", basic.tryId),
     };
 
-    const nodes = try basic.pMulti(
-        self,
-        rules,
-        .@"{",
-    );
+    const nodes = try basic.pMulti(self, rules, .@"{");
     defer nodes.deinit();
     return try self.pushNode(.{ Tag.object_pattern, nodes.items });
 }
 
-fn pListPattern(self: *Parser) Err!u64 {
+fn tryListPattern(self: *Parser) Err!u64 {
+    try self.enter();
+    defer self.exit();
+    if (!self.peek(&.{.@"["}))
+        return 0;
+
     const rules = .{
-        basic.rule("pattern", Parser.pPattern),
+        basic.rule("pattern", Parser.tryPattern),
     };
-    const nodes = try basic.pMulti(
-        self,
-        rules,
-        .@"[",
-    );
+    const nodes = try basic.pMulti(self, rules, .@"[");
     defer nodes.deinit();
     return try self.pushNode(.{ Tag.list_pattern, nodes.items });
 }
 
-fn pExprPattern(self: *Parser) Err!u64 {
-    _ = self.nextToken();
-    const expr = try self.pExpr();
+fn tryExprPattern(self: *Parser) Err!u64 {
+    try self.enter();
+    defer self.exit();
+    if (!self.peek(&.{.@"<"}))
+        return 0;
+
+    const expr = try self.tryExpr();
     try self.expectNextToken(.@">", "expect a `>` to close the pattern");
     return try self.pushNode(.{ Tag.@"< expr >", expr });
 }
 
-fn pRangeOrSymbol(self: *Parser) Err!u64 {
-    _ = self.nextToken();
-    if (self.eatToken(.@".")) {
-        // ...id
-        if (self.peek(&.{ .@".", .id })) {
-            _ = self.nextToken();
-            _ = self.nextToken();
-            const id = try self.pushRaw(.id);
+fn tryRangeOrSymbol(self: *Parser) Err!u64 {
+    try self.enter();
+    defer self.exit();
 
-            return try self.pushNode(.{ Tag.list_rest_bind, id });
-        }
+    if (self.peek(&.{ .@".", .@".", .@".", .id })) {
+        self.eatTokens(3);
+        const id = try basic.tryId(self);
 
+        return try self.pushNode(.{ Tag.list_rest_bind, id });
+    }
+
+    // ..prefixPattern or ..= prefixPattern
+    if (self.peek(&.{ .@".", .@"." })) {
+        self.eatTokens(2);
         const tag = if (self.eatToken(.@"=")) Tag.range_to_inclusive else Tag.range_to;
-        const pattern = try pPrefixPattern(self, .{});
+        const pattern = try tryPrefixPattern(self, .{});
+        if (pattern == 0)
+            return self.unexpectedToken("expect a pattern after `..` or `..=`");
+
         return try self.pushNode(.{ tag, pattern });
     }
 
-    if (self.peek(&.{.id})) {
-        return try self.pushRaw(.symbol);
-    }
-    return self.invalidPattern(self.lcursor, self.rcursor + 1, "I don't know how to parse this pattern😢");
+    return try basic.trySymbol(self);
 }
 
-pub fn pBranches(self: *Parser) Err!u64 {
+pub fn tryBranches(self: *Parser) Err!u64 {
+    try self.enter();
+    defer self.exit();
+    if (!self.peek(&.{.@"{"})) return 0;
+
     const rules = .{
         basic.rule("catch branch", tryCatchBranch),
-        basic.rule("pattern branch", pPatternBranch),
+        basic.rule("pattern branch", tryPatternBranch),
     };
 
-    const nodes = try basic.pMulti(
-        self,
-        rules,
-        .@"{",
-    );
+    const nodes = try basic.pMulti(self, rules, .@"{");
     defer nodes.deinit();
     return try self.pushNode(.{ Tag.branches, nodes.items });
 }
 
-pub fn pPatternBranch(self: *Parser) Err!u64 {
+pub fn tryPatternBranch(self: *Parser) Err!u64 {
+    try self.enter();
+    defer self.exit();
+
     var pattern: u64 = 0;
     var stmt_or_block: u64 = 0;
 
-    pattern = try pPattern(self, .{});
+    pattern = try tryPattern(self, .{});
+    if (pattern == 0) return 0;
+
     try self.expectNextToken(.@"=>", "expect a `=>` to separate pattern and expr");
     stmt_or_block = try stmt.tryBlock(self);
     if (stmt_or_block == 0) {
-        stmt_or_block = try self.pStmt();
+        stmt_or_block = try self.tryStmt();
     }
     return try self.pushNode(.{ Tag.pattern_branch, pattern, stmt_or_block });
 }
 
 pub fn tryCatchBranch(self: *Parser) Err!u64 {
+    try self.enter();
+    defer self.exit();
     if (!self.eatToken(.k_catch)) return 0;
+
     var id: u64 = 0;
-    var expr_or_block: u64 = 0;
+    var stmt_or_block: u64 = 0;
 
     if (self.peek(&.{.id}))
-        id = try self.pushRaw(.id)
+        id = try self.pushAtom(.id)
     else
         return self.unexpectedToken("expect an error name to bind the error");
 
     try self.expectNextToken(.@"=>", "expect a `=>` to separate error name and expr");
 
-    expr_or_block = try stmt.tryBlock(self);
-    if (expr_or_block == 0)
-        expr_or_block = try self.pExpr();
+    stmt_or_block = try stmt.tryBlock(self);
+    if (stmt_or_block == 0)
+        stmt_or_block = try self.tryStmt();
 
-    return try self.pushNode(.{ Tag.catch_branch, id, expr_or_block });
+    return try self.pushNode(.{ Tag.catch_branch, id, stmt_or_block });
 }

@@ -1,5 +1,10 @@
-mod mem {
-    trait Allocator {}
-    struct Heap {}
-    impl Allocator for Heap {}
+struct Node
+where T
+{
+    data: T,
+    next: ?Node<T>,
+    prev: ?Node<T>,
 }
+
+derive Debug, Eq, Hash for Node<T>
+where T:- Debug + Eq + Hash;

@@ -64,10 +64,40 @@ pub const TypePool = struct {
     }
 
     pub fn typeEql(_: TypePool, x: [*]u8, y: [*]u8) bool {
-        std.debug.print("DEBUG: {any}\n", .{gc.MetaData.metaOf(x)});
-        std.debug.print("DEBUG: {any}\n", .{gc.MetaData.metaOf(y)});
         return gc.MetaData.metaOf(x).type_index == gc.MetaData.metaOf(y).type_index;
     }
+};
+
+pub const Type = union(enum) {
+    Any,
+    Trait,
+    Impl,
+    Type,
+    Object,
+    int: struct { size: u8, signed: bool },
+    float: u8,
+    void,
+    noreturn,
+    // to the struct description
+    struct_: u64,
+    // to the enum description
+    enum_: u64,
+    // to the union description
+    union_: u64,
+    // to the module description
+    mod: u64,
+    // to the function description
+    function: u64,
+    // to the effect description
+    effect: u64,
+
+    optional: u32,
+    effectful: u64,
+    error_union: u64,
+
+    // Slice<u8> -> [to_slice, 1, to_u8]
+    // Slice: pure fn<T> -> Type
+    compose: u64,
 };
 
 pub const permitive_types = std.StaticStringMap(u32).initComptime(.{

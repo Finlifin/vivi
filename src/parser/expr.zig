@@ -12,10 +12,11 @@ const definition = @import("definition.zig");
 
 pub const Options = struct {
     no_object_call: bool = false,
+    inside_pratt: bool = false,
 };
 
-pub fn pExpr(self: *Parser, opt: Options) Err!u64 {
-    return try pPratt(self, 0, opt);
+pub fn tryExpr(self: *Parser, opt: Options) Err!u64 {
+    return try tryPratt(self, 0, opt);
 }
 
 const OpInfo = struct {
@@ -70,8 +71,8 @@ const op_table = std.enums.directEnumArrayDefault(
     },
 );
 
-fn pPratt(self: *Parser, min_prec: i8, opt: Options) Err!u64 {
-    var left = try pPrefixExpr(self);
+fn tryPratt(self: *Parser, min_prec: i8, opt: Options) Err!u64 {
+    var left = try tryPrefixExpr(self);
     if (left == 0) {
         return 0;
     }
@@ -87,14 +88,10 @@ fn pPratt(self: *Parser, min_prec: i8, opt: Options) Err!u64 {
             .@"(" => {
                 const rules = .{
                     basic.rule("property", basic.tryProperty),
-                    basic.rule("expr", Parser.pExpr),
+                    basic.rule("expr", Parser.tryExpr),
                 };
 
-                const nodes = try basic.pMulti(
-                    self,
-                    rules,
-                    .@"(",
-                );
+                const nodes = try basic.pMulti(self, rules, .@"(");
                 defer nodes.deinit();
                 left = try self.pushNode(.{ Tag.call, left, nodes.items });
 
@@ -103,14 +100,10 @@ fn pPratt(self: *Parser, min_prec: i8, opt: Options) Err!u64 {
             .@"<" => {
                 const rules = .{
                     basic.rule("property", basic.tryProperty),
-                    basic.rule("expr", Parser.pExpr),
+                    basic.rule("expr", Parser.tryExpr),
                 };
 
-                const nodes = try basic.pMulti(
-                    self,
-                    rules,
-                    .@"<",
-                );
+                const nodes = try basic.pMulti(self, rules, .@"<");
                 defer nodes.deinit();
                 left = try self.pushNode(.{ Tag.diamond_call, left, nodes.items });
 
@@ -122,37 +115,33 @@ fn pPratt(self: *Parser, min_prec: i8, opt: Options) Err!u64 {
                 }
                 const rules = .{
                     basic.rule("property", basic.tryProperty),
-                    basic.rule("expr", Parser.pExpr),
+                    basic.rule("expr", Parser.tryExpr),
                 };
 
-                const nodes = try basic.pMulti(
-                    self,
-                    rules,
-                    .@"{",
-                );
+                const nodes = try basic.pMulti(self, rules, .@"{");
                 defer nodes.deinit();
                 left = try self.pushNode(.{ Tag.object_call, left, nodes.items });
 
                 continue;
             },
             .@"[" => {
-                _ = self.nextToken();
-                const index_expr = try self.pExpr();
+                self.eatTokens(1);
+                const index_expr = try self.tryExpr();
                 try self.expectNextToken(.@"]", "expect a `]` to close index call");
                 left = try self.pushNode(.{ Tag.index_call, left, index_expr });
                 continue;
             },
             .@"#" => {
-                _ = self.nextToken();
+                self.eatTokens(1);
                 switch (self.peekToken().tag) {
                     .@"{" => {
-                        const branches = try pattern.pBranches(self);
+                        const branches = try pattern.tryBranches(self);
                         left = try self.pushNode(.{ Tag.effect_elimination, left, branches });
                         continue;
                     },
                     .k_use => {
                         _ = self.nextToken();
-                        const expr = try pPrefixExpr(self);
+                        const expr = try tryPrefixExpr(self);
                         left = try self.pushNode(.{ Tag.effect_elimination_use, left, expr });
                         continue;
                     },
@@ -163,16 +152,17 @@ fn pPratt(self: *Parser, min_prec: i8, opt: Options) Err!u64 {
                 }
             },
             .@"!" => {
-                _ = self.nextToken();
+                self.eatTokens(1);
+                std.debug.print("DEBUG: {any}\n", .{self.peekToken()});
                 switch (self.peekToken().tag) {
                     .@"{" => {
-                        const branches = try pattern.pBranches(self);
+                        const branches = try pattern.tryBranches(self);
                         left = try self.pushNode(.{ Tag.error_elimination, left, branches });
                         continue;
                     },
                     .k_use => {
-                        _ = self.nextToken();
-                        const expr = try pPrefixExpr(self);
+                        self.eatTokens(1);
+                        const expr = try tryPrefixExpr(self);
                         left = try self.pushNode(.{ Tag.error_elimination_use, left, expr });
                         continue;
                     },
@@ -183,7 +173,7 @@ fn pPratt(self: *Parser, min_prec: i8, opt: Options) Err!u64 {
                 }
             },
             .@"?" => {
-                _ = self.nextToken();
+                self.eatTokens(1);
                 var block: u64 = 0;
                 block = try stmt.tryBlock(self);
 
@@ -195,17 +185,18 @@ fn pPratt(self: *Parser, min_prec: i8, opt: Options) Err!u64 {
                 continue;
             },
             .k_match => {
-                _ = self.nextToken();
-
-                const branches = try pattern.pBranches(self);
+                self.eatTokens(1);
+                const branches = try pattern.tryBranches(self);
                 left = try self.pushNode(.{ Tag.match, left, branches });
                 continue;
             },
             // it might be a select, @"pattern . *", range_from, range_from_to, range_from_to_inclusive
             .@"." => {
-                _ = self.nextToken();
+                try self.enter();
+                defer self.exit();
+                self.eatTokens(1);
                 if (self.peek(&.{.id})) {
-                    const id = try self.pushRaw(.id);
+                    const id = try self.pushAtom(.id);
                     left = try self.pushNode(.{ Tag.select, left, id });
                     continue;
                 }
@@ -217,29 +208,29 @@ fn pPratt(self: *Parser, min_prec: i8, opt: Options) Err!u64 {
                     }
 
                     const tag = if (self.eatToken(.@"=")) Tag.range_from_to_inclusive else Tag.range_from_to;
-                    const expr = try pPrefixExpr(self);
+                    const expr = try tryPrefixExpr(self);
 
                     left = try self.pushNode(.{ tag, left, expr });
                     continue;
                 }
 
-                return self.invalidPattern(self.lcursor, self.rcursor, "unable to recognize this pattern😢");
+                return self.invalidExpr(self.rcursor, self.rcursor, "expect an identifier or a range after a `.`");
             },
 
             .@"'" => {
                 _ = self.nextToken();
-                const id = try self.pushRaw(.id);
+                const id = try self.pushAtom(.id);
                 left = try self.pushNode(.{ Tag.image, left, id });
                 continue;
             },
             else => {},
         }
         _ = self.nextToken();
-
-        const right = try pPratt(self, op_info.prec + 1, opt);
-        if (right == 0) {
-            return self.unexpectedToken("expect an expression while parsing pratt");
-        }
+        var opt_ = opt;
+        opt_.inside_pratt = true;
+        const right = try tryPratt(self, op_info.prec + 1, opt);
+        if (right == 0)
+            return self.invalidExpr(self.rcursor, self.rcursor, "expect an expression after a binary operator");
 
         left = try self.pushNode(.{ op_info.tag, left, right });
     }
@@ -247,39 +238,42 @@ fn pPratt(self: *Parser, min_prec: i8, opt: Options) Err!u64 {
     return left;
 }
 
-fn pPrefixExpr(self: *Parser) Err!u64 {
+fn tryPrefixExpr(self: *Parser) Err!u64 {
+    try self.enter();
+    defer self.exit();
+
     const token = self.peekToken();
     return switch (token.tag) {
-        .id => try self.pushRaw(.id),
-        .str => try self.pushRaw(.str),
-        .char => try self.pushRaw(.char),
-        .k_true => try self.pushRaw(.bool),
-        .k_false => try self.pushRaw(.bool),
-        .k_null => try self.pushRaw(.null),
-        .k_void => try self.pushRaw(.void),
-        .k_noreturn => try self.pushRaw(.noreturn),
-        .k_Any => try self.pushRaw(.Any),
-        .k_any => try self.pushRaw(.any),
-        .k_unit => try self.pushRaw(.unit),
+        .id => try basic.tryId(self),
+        .str => try self.pushAtom(.str),
+        .char => try self.pushAtom(.char),
+        .k_true => try self.pushAtom(.bool),
+        .k_false => try self.pushAtom(.bool),
+        .k_null => try self.pushAtom(.null),
+        // .k_void => try self.pushAtom(.void),
+        // .k_noreturn => try self.pushAtom(.noreturn),
+        // .k_Any => try self.pushAtom(.Any),
+        // .k_any => try self.pushAtom(.any),
+        // .k_unit => try self.pushAtom(.unit),
 
-        .k_not => try pBoolNot(self),
-        .int => try pDigit(self),
-        .@"." => try pSymbol(self),
-        .k_derive => try pDerive(self),
+        .k_not => try tryBoolNot(self),
+        .int => try tryDigit(self),
+        .@"." => try basic.trySymbol(self),
+        .k_derive => try tryDerive(self),
         .k_if => try stmt.tryIf(self),
         .k_when => try stmt.tryWhen(self),
 
-        .@"{" => try pObject(self),
-        .@"[" => try pList(self),
-        .@"(" => try pQuoteOrTuple(self),
+        .@"{" => try tryObject(self),
+        .@"[" => try tryList(self),
+        .@"(" => try tryQuoteOrTuple(self),
 
-        .@"<" => try pPatternExpr(self),
+        .@"<" => try tryPatternExpr(self),
 
-        .@"|" => try pLambda(self),
-        .k_do => try pDoBlock(self),
-        .@"?" => try pOptionType(self),
-        .@"#" => try pEffectType(self),
-        .@"!" => try pErrorType(self),
+        .@"|" => try tryLambda(self),
+        .k_do => try tryDoBlock(self),
+        .@"?" => try tryOptionType(self),
+        .@"#" => try tryEffectType(self),
+        .@"!" => try tryErrorType(self),
 
         .k_struct,
         .k_impl,
@@ -290,107 +284,110 @@ fn pPrefixExpr(self: *Parser) Err!u64 {
         .k_trait,
         => try definition.tryDefinition(self),
 
-        else => return self.invalidExpr(self.lcursor, self.rcursor, "unable to recognize it as an expr😢"),
+        else => 0,
     };
 }
 
-fn pBoolNot(self: *Parser) Err!u64 {
-    const expr = try pPrefixExpr(self);
+fn tryBoolNot(self: *Parser) Err!u64 {
+    try self.enter();
+    defer self.exit();
+    if (!self.eatToken(.k_not)) return 0;
+
+    self.eatTokens(1);
+    const expr = try tryPrefixExpr(self);
     return self.pushNode(.{ Tag.bool_not, expr });
 }
 
-fn pDerive(self: *Parser) Err!u64 {
-    _ = self.nextToken();
+fn tryDerive(self: *Parser) Err!u64 {
+    try self.enter();
+    defer self.exit();
+    if (!self.eatToken(.k_derive)) return 0;
+
     var traits = std.ArrayList(u64).init(self.tmp_alc.allocator());
     defer traits.deinit();
     while (true) {
-        const trait = try self.pExpr();
+        const trait = try self.tryExpr();
         try traits.append(trait);
         if (!self.eatToken(.@",")) break;
     }
     try self.expectNextToken(.k_for, "expect a `for` to specify the derive type");
-    const derive_type = try self.pExpr();
-    return self.pushNode(.{ Tag.derivation, derive_type, traits.items });
+    const derive_type = try self.tryExpr();
+    const clauses = try definition.tryClauses(self);
+    return self.pushNode(.{ Tag.derivation, derive_type, clauses, traits.items });
 }
 
-pub fn pDigit(self: *Parser) Err!u64 {
+pub fn tryDigit(self: *Parser) Err!u64 {
+    try self.enter();
+    defer self.exit();
     if (self.peek(&.{ .int, .@".", .int })) {
-        const result = try self.pushRaw(.real);
-        _ = self.nextToken();
-        _ = self.nextToken();
+        const result = try self.pushReal();
         return result;
     }
-    return try self.pushRaw(.int);
+    return try self.pushAtom(.int);
 }
 
-fn pSymbol(self: *Parser) Err!u64 {
-    _ = self.nextToken();
-    if (!self.eatToken(.id))
-        return self.invalidExpr(self.lcursor, self.rcursor + 1, "expected a identifier for a symbol expression");
+fn tryObject(self: *Parser) Err!u64 {
+    try self.enter();
+    defer self.exit();
+    if (!self.peek(&.{.@"{"})) return 0;
 
-    return self.pushNode(.{ Tag.symbol, self.rcursor });
-}
-
-fn pObject(self: *Parser) Err!u64 {
     const rules = .{
         basic.rule("property", basic.tryProperty),
-        basic.rule("expr", Parser.pExpr),
+        basic.rule("expr", Parser.tryExpr),
     };
 
-    const nodes = try basic.pMulti(
-        self,
-        rules,
-        .@"{",
-    );
+    const nodes = try basic.pMulti(self, rules, .@"{");
     defer nodes.deinit();
     return try self.pushNode(.{ Tag.object, nodes.items });
 }
 
-fn pList(self: *Parser) Err!u64 {
+fn tryList(self: *Parser) Err!u64 {
+    try self.enter();
+    defer self.exit();
+    if (!self.peek(&.{.@"["})) return 0;
+
     const rules = .{
-        basic.rule("expr", Parser.pExpr),
+        basic.rule("expr", Parser.tryExpr),
     };
 
-    const nodes = try basic.pMulti(
-        self,
-        rules,
-        .@"[",
-    );
+    const nodes = try basic.pMulti(self, rules, .@"[");
     defer nodes.deinit();
     return try self.pushNode(.{ Tag.list, nodes.items });
 }
 
-pub fn pQuoteOrTuple(self: *Parser) Err!u64 {
+pub fn tryQuoteOrTuple(self: *Parser) Err!u64 {
     const rules = .{
-        basic.rule("expr", Parser.pExpr),
+        basic.rule("expr", Parser.tryExpr),
     };
 
-    const nodes = try basic.pMulti(
-        self,
-        rules,
-        .@"(",
-    );
+    const nodes = try basic.pMulti(self, rules, .@"(");
     defer nodes.deinit();
     const tag = if (nodes.items.len == 1) Tag.quote else Tag.tuple;
 
     return try self.pushNode(.{ tag, nodes.items });
 }
 
-fn pPatternExpr(self: *Parser) Err!u64 {
-    _ = self.nextToken();
-    self.sync();
-    const expr = try self.pPattern();
+fn tryPatternExpr(self: *Parser) Err!u64 {
+    try self.enter();
+    defer self.exit();
+    if (!self.eatToken(.@"<")) return 0;
+
+    const expr = try self.tryPattern();
     try self.expectNextToken(.@">", "expected a `>` to close the pattern expr");
     return try self.pushNode(.{ Tag.@"< pattern >", expr });
 }
 
-fn pDoBlock(self: *Parser) Err!u64 {
+fn tryDoBlock(self: *Parser) Err!u64 {
     _ = self.nextToken();
     return self.pushNode(.{ Tag.do_block, try stmt.tryBlock(self) });
 }
 
 // |args| (->expr)? clauses? (block | expr)
-fn pLambda(self: *Parser) Err!u64 {
+fn tryLambda(self: *Parser) Err!u64 {
+    try self.enter();
+    defer self.exit();
+    if (!self.peek(&.{.@"|"})) return 0;
+
     var return_type: u64 = 0;
     var clauses: u64 = 0;
     var block_or_expr: u64 = 0;
@@ -407,35 +404,44 @@ fn pLambda(self: *Parser) Err!u64 {
     defer args.deinit();
 
     if (self.eatToken(.@"->"))
-        return_type = try self.pExpr();
+        return_type = try self.tryExpr();
 
     clauses = try definition.tryClauses(self);
 
     block_or_expr = try stmt.tryBlock(self);
     if (block_or_expr == 0)
-        block_or_expr = try self.pExpr();
+        block_or_expr = try self.tryExpr();
 
     return try self.pushNode(.{ Tag.lambda, return_type, clauses, block_or_expr, args.items });
 }
 
-fn pOptionType(self: *Parser) Err!u64 {
-    _ = self.nextToken();
-    const expr = try self.pExpr();
+fn tryOptionType(self: *Parser) Err!u64 {
+    try self.enter();
+    defer self.exit();
+    if (!self.eatToken(.@"?")) return 0;
+
+    const expr = try self.tryExpr();
     return try self.pushNode(.{ Tag.@"?expr", expr });
 }
 
 // #expr expr
-fn pEffectType(self: *Parser) Err!u64 {
-    _ = self.nextToken();
-    const left = try pExpr(self, .{});
-    const right = try pExpr(self, .{ .no_object_call = true });
+fn tryEffectType(self: *Parser) Err!u64 {
+    try self.enter();
+    defer self.exit();
+    if (!self.eatToken(.@"#")) return 0;
+
+    const left = try tryExpr(self, .{});
+    const right = try tryExpr(self, .{ .no_object_call = true });
     return try self.pushNode(.{ Tag.@"#expr expr", left, right });
 }
 
 // !expr expr
-fn pErrorType(self: *Parser) Err!u64 {
-    _ = self.nextToken();
-    const left = try pExpr(self, .{});
-    const right = try pExpr(self, .{ .no_object_call = true });
+fn tryErrorType(self: *Parser) Err!u64 {
+    try self.enter();
+    defer self.exit();
+    if (!self.eatToken(.@"!")) return 0;
+
+    const left = try tryExpr(self, .{});
+    const right = try tryExpr(self, .{ .no_object_call = true });
     return try self.pushNode(.{ Tag.@"!expr expr", left, right });
 }

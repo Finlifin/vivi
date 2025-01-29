@@ -25,12 +25,18 @@ pub const Lexer = struct {
                     return token(.@".", old_cursor, self.cursor);
                 },
                 '\'' => {
-                    // recognize char
-                    // TODO: escape
+                    // 'n' => char
                     if (self.cursor + 2 < self.src.len and b[self.cursor + 2] == '\'') {
                         self.cursor += 3;
                         return token(.char, old_cursor, self.cursor);
                     }
+                    // '\n' => char
+                    else if (self.cursor + 3 < self.src.len and b[self.cursor + 3] == '\'' and b[self.cursor + 1] == '\\') {
+                        self.cursor += 4;
+                        return token(.char, old_cursor, self.cursor);
+                    }
+                    // '   { ANY } => macro_content
+                    // TODO
                     self.cursor += 1;
                     return token(.@"'", old_cursor, self.cursor);
                 },

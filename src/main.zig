@@ -25,11 +25,40 @@ pub fn main() !void {
     for (parser_.nodes.items, 0..) |n, i| {
         std.debug.print("%{d}:{d} ", .{ i, n });
     }
-    for (parser_.tags.items, parser_.tags_location.items) |tag, i| {
-        std.debug.print("%{}:{s}  ", .{ i - 1, @tagName(tag) });
+    for (parser_.tags.items, parser_.tags_location.items, 0..) |tag, w, i| {
+        std.debug.print("%{}:{s}:{}  ", .{ i, @tagName(tag), w - 1 });
     }
+    // for (parser_.spans.items) |span| {
+    //     try virtual_fs.reportB(
+    //         vfs.BigSpan{ .from = vfs.Span{
+    //             .src = src_id,
+    //             .token = parser_.getToken(span.from),
+    //         }, .to = vfs.Span{
+    //             .src = src_id,
+    //             .token = parser_.getToken(span.to),
+    //         } },
+    //         .info,
+    //         .TestingErr,
+    //         "测试输入",
+    //         1,
+    //     );
+    // }
+    const span = parser_.getSpan(57).?;
+    try virtual_fs.reportB(
+        vfs.BigSpan{ .from = vfs.Span{
+            .src = src_id,
+            .token = parser_.getToken(span.from),
+        }, .to = vfs.Span{
+            .src = src_id,
+            .token = parser_.getToken(span.to),
+        } },
+        .info,
+        .TestingErr,
+        "测试输入",
+        3,
+    );
+
     std.debug.print("\n", .{});
-    std.debug.print("DEBUG: node {any}\n", .{node});
     try parser_.dump(node, s_expression_buffer.writer());
     std.debug.print("{s}\n", .{s_expression_buffer.items});
 

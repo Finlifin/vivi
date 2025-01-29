@@ -17,7 +17,7 @@ const vfs = @import("vfs.zig");
 
 //     p.dumpTokens();
 //     try p.eatToken(.sof);
-//     const node = try p.pExpr();
+//     const node = try p.tryExpr();
 //     p.dump(node, 0);
 // }
 

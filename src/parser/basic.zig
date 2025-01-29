@@ -6,15 +6,19 @@ const Parser = parser.Parser;
 const Err = parser.Err;
 const Tag = ast.Tag;
 
+const expr_module = @import("expr.zig");
+
 // it may return a property or a symbol or nothing
 pub fn tryProperty(self: *Parser) Err!u64 {
+    try self.enter();
+    defer self.exit();
     if (!self.peek(&.{ .@".", .id })) return 0;
-    _ = self.nextToken();
-    if (isTerminator(self.getToken(self.rcursor + 2))) return try self.pushRaw(.symbol);
 
-    const id = try self.pushRaw(.id);
-    self.sync();
-    const expr = try self.pExpr();
+    if (isTerminator(self.getToken(self.rcursor + 3))) return 0;
+
+    self.eatTokens(1);
+    const id = try tryId(self);
+    const expr = try self.tryExpr();
     return try self.pushNode(.{ Tag.property, id, expr });
 }
 
@@ -86,6 +90,20 @@ pub fn pMulti(
 }
 
 pub fn tryId(self: *Parser) Err!u64 {
+    try self.enter();
+    defer self.exit();
+
     if (!self.peek(&.{.id})) return 0;
-    return try self.pushRaw(.id);
+    return try self.pushAtom(.id);
+}
+
+pub fn trySymbol(self: *Parser) Err!u64 {
+    try self.enter();
+    defer self.exit();
+    if (!self.peek(&.{ .@".", .id })) return 0;
+
+    self.eatTokens(1);
+    const id = try tryId(self);
+
+    return self.pushNode(.{ Tag.symbol, id });
 }
