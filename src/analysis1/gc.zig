@@ -1,7 +1,6 @@
 const std = @import("std");
-const mem = @import("std").mem;
-const type_pool = @import("type_pool.zig");
-const permitive_types = type_pool.permitive_types;
+const mem = std.mem;
+const hir = @import("hir.zig");
 
 pub const GcOption = struct {
     mode: enum { debug, release } = .debug,
@@ -36,21 +35,40 @@ pub const Gc = struct {
         };
     }
 
+    // Despearted
     pub fn allocAtom(self: *Gc, size: u8) Err![*]u8 {
         const obj = try self.allocRaw(size);
-        const meta = MetaData.metaOf(obj);
+        const meta = MetaData.at(obj);
         meta.size_description = size;
 
         return obj;
     }
 
+    // Despearted
     pub fn alloc(self: *Gc, len: u16) Err![*]u8 {
         const obj = try self.allocRaw(len * 8);
-        const meta = MetaData.metaOf(obj);
+        const meta = MetaData.at(obj);
         meta.size_description = 0;
         meta.field_len = len;
 
         return obj;
+    }
+
+    pub fn new(self: *Gc, meta: MetaData) ![*]u8 {
+        var bytes: []u8 = undefined;
+        if (meta.tag == .children)
+            bytes = try self.arena.alloc(u8, meta.field_len * 24 + 8)
+        else if (meta.size_description == 0)
+            bytes = try self.arena.alloc(u8, meta.field_len * 8 + 8)
+        else
+            bytes = try self.arena.alloc(u8, meta.size_description + 8);
+
+        const meta_addr: *MetaData = @alignCast(@ptrCast(bytes));
+        meta_addr.* = meta;
+
+        try self.objects.append(bytes.ptr + 8);
+
+        return bytes[8..].ptr;
     }
 
     //      -----------
@@ -76,23 +94,40 @@ pub const Gc = struct {
     }
 
     pub fn mark(self: *Gc, obj: [*]u8) void {
-        const meta = MetaData.metaOf(obj);
-        if (meta.color == .used or meta.color == .used_in_type) return;
+        const meta = MetaData.at(obj);
+        if (meta.color == .used) return;
         meta.color = .used;
-        if (meta.size_description == 0) {
-            const len = meta.field_len;
-            const base = @as([*][*]u8, @alignCast(@ptrCast(obj)));
-            for (0..len) |field| {
-                self.mark(base[field]);
-            }
+
+        switch (meta.tag) {
+            .mod_def => {
+                self.mark(hir.ModDef.at(obj).children);
+            },
+            .root => {
+                self.mark(hir.Root.at(obj).children);
+            },
+            .children => {
+                for (hir.Children.Entry.entries(obj)) |child| {
+                    if (child.obj) |child_obj| self.mark(child_obj);
+                }
+            },
+            .binary => {
+                const bin = hir.Binary.at(obj);
+                self.mark(bin.lhs);
+                self.mark(bin.rhs);
+            },
+            .const_decl => {
+                const decl = hir.ConstDecl.at(obj);
+                if (decl.value) |v| self.mark(v);
+                if (decl.type) |t| self.mark(t);
+            },
+            else => {},
         }
     }
 
     pub fn gc(self: *Gc, root: []const [*]u8) !void {
         for (self.objects.items) |obj| {
-            const meta = MetaData.metaOf(obj);
-            if (meta.color != .used_in_type)
-                meta.color = .unused;
+            const meta = MetaData.at(obj);
+            meta.color = .unused;
         }
 
         for (root) |obj| {
@@ -100,7 +135,7 @@ pub const Gc = struct {
         }
 
         for (self.objects.items, 0..) |obj, i| {
-            const meta = MetaData.metaOf(obj);
+            const meta = MetaData.at(obj);
             if (meta.color == .unused) {
                 self.free(obj);
                 try self.freed_objects.append(i);
@@ -134,14 +169,6 @@ pub const Gc = struct {
         return false;
     }
 
-    pub fn newDigit(self: *Gc, comptime digit_type: type, value: digit_type) Err![*]u8 {
-        const type_index = permitive_types.get(@typeName(digit_type)).?;
-        const obj = try self.alloc(type_index);
-        const len = type_pool.TypePool.sizeOf(undefined, type_index);
-        std.mem.copyForwards(u8, obj[0..len], Object.rawValue(digit_type, &value)[0..len]);
-        return obj;
-    }
-
     pub fn deinit(self: *Gc) void {
         for (self.objects.items) |obj| {
             self.arena.free(MetaData.entireObject(obj));
@@ -157,22 +184,33 @@ pub const MetaData = struct {
     // if the size_description is 0, the object's size is len * 8
     size_description: u8 = 0,
     field_len: u16 = 0,
-    type_index: u32 = 0,
+    tag: hir.Tag = .invalid,
 
     comptime {
         std.debug.assert(@sizeOf(MetaData) == 8);
     }
 
-    pub inline fn metaOf(obj: [*]u8) *MetaData {
-        return @as(*MetaData, @alignCast(@ptrCast(obj - 8)));
+    pub inline fn at(obj: [*]u8) *MetaData {
+        return @alignCast(@as(*MetaData, @alignCast(@ptrCast(obj - 8))));
+    }
+    pub fn init(size_description: u8, field_len: u16, tag: hir.Tag) MetaData {
+        return MetaData{
+            .color = .used,
+            .size_description = size_description,
+            .field_len = field_len,
+            .tag = tag,
+        };
     }
 
     pub fn entireObject(obj: [*]u8) []u8 {
-        const meta = metaOf(obj);
+        const meta = at(obj);
         const base = obj - 8;
 
         var size: usize = 8;
-        if (meta.size_description == 0) {
+
+        if (meta.tag == .children) {
+            size += meta.field_len * 24;
+        } else if (meta.size_description == 0) {
             size += meta.field_len * 8;
         } else {
             size += meta.size_description;
@@ -182,12 +220,12 @@ pub const MetaData = struct {
 };
 
 pub const Object = struct {
-    pub fn rawValue(comptime ValueType: type, value: *const ValueType) [*]u8 {
+    pub fn toBytes(comptime ValueType: type, value: *const ValueType) [*]u8 {
         return @as([*]u8, @alignCast(@ptrCast(@constCast(value))));
     }
 
     pub fn nthField(obj: [*]u8, n: u16) [*]u8 {
-        const meta = MetaData.metaOf(obj);
+        const meta = MetaData.at(obj);
         std.debug.assert(meta.size_description == 0);
         std.debug.assert(n < meta.field_len);
         const base = @as([*][*]u8, @alignCast(@ptrCast(obj)));
@@ -195,7 +233,7 @@ pub const Object = struct {
     }
 
     pub fn setNthField(obj: [*]u8, n: u16, value: [*]u8) void {
-        const meta = MetaData.metaOf(obj);
+        const meta = MetaData.at(obj);
         std.debug.assert(meta.size_description == 0);
         std.debug.assert(n < meta.field_len);
         const base = @as([*][*]u8, @alignCast(@ptrCast(obj)));
@@ -206,7 +244,6 @@ pub const Object = struct {
 pub const Color = enum(u8) {
     used,
     unused,
-    used_in_type,
     undefined,
 };
 
@@ -229,5 +266,5 @@ pub fn main() !void {
     Object.setNthField(c, 0, a);
     Object.setNthField(a, 1, some);
 
-    try gc.gc(&.{});
+    try gc.gc(&.{c});
 }

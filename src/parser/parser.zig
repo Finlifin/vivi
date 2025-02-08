@@ -9,16 +9,10 @@ const vfs = @import("../vfs.zig");
 const error_code = @import("../error_code.zig");
 const handle_error = @import("error.zig").handle_error;
 const basic = @import("basic.zig");
+const Span = ast.Span;
 
 // an ast is flatten buffer of nodes
 // if buf[i] == .int, then buf[i+1] is the main token
-
-const Span = struct {
-    node: u64,
-    from: u64,
-    to: u64,
-};
-
 pub const Parser = struct {
     alc: std.mem.Allocator,
     tmp_alc: std.heap.FixedBufferAllocator,
@@ -176,15 +170,14 @@ pub const Parser = struct {
         return result;
     }
 
-    // pub fn sync(self: *Parser) void {
-    //     self.valid_nodes_len = self.nodes.items.len;
-    //     self.lcursor = self.rcursor;
-    // }
+    pub fn sync(self: *Parser) void {
+        self.valid_nodes_len = self.nodes.items.len;
+    }
 
-    // pub fn fallback(self: *Parser) void {
-    //     self.nodes.items = self.nodes.items[0..self.valid_nodes_len];
-    //     self.rcursor = self.lcursor;
-    // }
+    pub fn fallback(self: *Parser) void {
+        self.nodes.items = self.nodes.items[0..self.valid_nodes_len];
+        self.rcursor = self.lcursors.items[self.lcursors.items.len - 1];
+    }
 
     pub fn enter(self: *Parser) Err!void {
         try self.lcursors.append(self.rcursor);
@@ -256,7 +249,7 @@ pub const Parser = struct {
 
     pub fn parse(self: *Parser) u64 {
         // the first token is always sof
-        return stmt.pModScope(self) catch |err| {
+        return stmt.pFileScope(self) catch |err| {
             handle_error(self, err);
             return 0;
         };
@@ -355,6 +348,24 @@ pub const Parser = struct {
         }
     }
 
+    pub fn intoAst(self: *Parser) ast.Ast {
+        var result: ast.Ast = undefined;
+        result.src = self.src;
+        result.src_id = self.src_id;
+        result.tokens = self.tokens;
+        result.nodes = self.nodes;
+        result.vfs = self.vfs;
+        result.spans = self.spans;
+
+        self.lcursors.deinit();
+        self.alc.free(self.tmp);
+        if (self.option.mode == .debug) {
+            self.tags.deinit();
+            self.tags_location.deinit();
+        }
+        return result;
+    }
+
     // dump node to s-expression format
     pub fn dump(self: Parser, node_index: u64, writer: anytype) !void {
         const node = self.nodes.items[node_index];
@@ -407,6 +418,7 @@ pub const Parser = struct {
             .option_elimination_unwrap,
             .defer_stmt,
             .errdefer_stmt,
+            .requires_predicate,
             => {
                 try self.dump(self.getNode(node_index + 1), writer);
             },
@@ -481,6 +493,7 @@ pub const Parser = struct {
             .tuple_pattern,
             .list_pattern,
             .block,
+            .file_scope,
             .clauses,
             .branches,
             .when,
@@ -567,7 +580,11 @@ pub const Parser = struct {
                 }
             },
             // fn name? (args) (->expr)? clauses? (block | ;)
-            .fn_def => {
+            // or effect
+            .fn_def,
+            .effect_def,
+            .diamond_fn_def,
+            => {
                 try self.dump(self.getNode(node_index + 1), writer);
                 try writer.writeAll(" ");
                 try self.dump(self.getNode(node_index + 2), writer);

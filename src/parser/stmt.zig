@@ -300,7 +300,7 @@ fn tryExprStmt(self: *Parser) Err!u64 {
     return try self.pushNode(.{ tag, left, right });
 }
 
-pub fn pModScope(self: *Parser) Err!u64 {
+pub fn pFileScope(self: *Parser) Err!u64 {
     try self.enter();
     defer self.exit();
     const rules = .{
@@ -315,7 +315,7 @@ pub fn pModScope(self: *Parser) Err!u64 {
 
     const nodes = try basic.pMulti(self, rules, .eof);
     defer nodes.deinit();
-    return try self.pushNode(.{ Tag.block, nodes.items });
+    return try self.pushNode(.{ Tag.file_scope, nodes.items });
 }
 
 pub fn tryConditionBranch(self: *Parser) Err!u64 {

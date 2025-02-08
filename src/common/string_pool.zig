@@ -6,11 +6,14 @@ pub const StringPool = struct {
     strings: std.ArrayList([]const u8),
 
     pub fn init(gpa: std.mem.Allocator) StringPool {
-        return .{
+        var result: StringPool = .{
             .gpa = gpa,
             .root = null,
             .strings = std.ArrayList([]const u8).init(gpa),
         };
+
+        _ = result.put("invalid") catch unreachable;
+        return result;
     }
 
     pub fn put(self: *StringPool, str: []const u8) !usize {
@@ -87,6 +90,10 @@ pub const StringPool = struct {
             return null;
         }
         return self.strings.items[idx];
+    }
+
+    pub fn contains(self: *StringPool, str: []const u8) bool {
+        return self.root != null and self.root.?.search(str) != null;
     }
 
     pub fn deinit(self: *StringPool) void {
@@ -249,6 +256,8 @@ const Node = struct {
         }
     }
 };
+
+pub const Index = usize;
 
 test "basic usage" {
     var pool = StringPool.init(std.testing.allocator);

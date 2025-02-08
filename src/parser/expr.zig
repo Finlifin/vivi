@@ -226,8 +226,6 @@ fn tryPratt(self: *Parser, min_prec: i8, opt: Options) Err!u64 {
             else => {},
         }
         _ = self.nextToken();
-        var opt_ = opt;
-        opt_.inside_pratt = true;
         const right = try tryPratt(self, op_info.prec + 1, opt);
         if (right == 0)
             return self.invalidExpr(self.rcursor, self.rcursor, "expect an expression after a binary operator");
@@ -278,6 +276,7 @@ fn tryPrefixExpr(self: *Parser) Err!u64 {
         .k_struct,
         .k_impl,
         .k_fn,
+        .k_effect,
         .k_enum,
         .k_union,
         .k_mod,
@@ -398,7 +397,7 @@ fn tryLambda(self: *Parser) Err!u64 {
         basic.rule("optional trait refined parameters", definition.tryOptionalTraitParam),
         basic.rule("optional parameter", definition.tryOptionalParam),
         basic.rule("trait refined parameters", definition.tryTraitParam),
-        basic.rule("parameter", definition.pParam),
+        basic.rule("parameter", definition.tryParam),
     };
     const args = try basic.pMulti(self, rules, .@"|");
     defer args.deinit();

@@ -1,95 +1,88 @@
 const std = @import("std");
 const gc = @import("gc.zig");
+const context = @import("../analysis1/context.zig");
+const string_pool = @import("../common/string_pool.zig");
 
 pub const TypePool = struct {
+    types: std.ArrayList(Type),
+    sp: *string_pool.StringPool,
 
-    // TODO: none permitive types
-    pub fn sizeOf(_: TypePool, type_index: u32) usize {
-        return switch (type_index) {
-            permitive_types.get("null").? => return 0,
-
-            permitive_types.get("bool").?,
-            permitive_types.get("i8").?,
-            permitive_types.get("u8").?,
-            permitive_types.get("char").?,
-            => return 1,
-
-            permitive_types.get("i16").?,
-            permitive_types.get("u16").?,
-            => return 2,
-
-            permitive_types.get("i32").?,
-            permitive_types.get("u32").?,
-            permitive_types.get("f32").?,
-            permitive_types.get("Type").?,
-            => return 4,
-            permitive_types.get("i64").?,
-            permitive_types.get("u64").?,
-            => return 8,
-            permitive_types.get("i128").? => return 16,
-
-            permitive_types.get("Integer").?,
-            permitive_types.get("Real").?,
-            permitive_types.get("Ref").?,
-            => return 8,
-
-            else => return 8,
+    pub fn init(gpa: std.mem.Allocator, sp: *string_pool.StringPool) !TypePool {
+        var result = TypePool{
+            .types = std.ArrayList(Type).init(gpa),
+            .sp = sp,
         };
+
+        // Add builtin types
+        try result.types.append(.Any);
+        try result.types.append(.str);
+        try result.types.append(.{ .int = .{ .size = 1, .signed = true } });
+        try result.types.append(.{ .int = .{ .size = 1, .signed = false } });
+        try result.types.append(.{ .int = .{ .size = 2, .signed = true } });
+
+        try result.types.append(.{ .int = .{ .size = 2, .signed = false } });
+        try result.types.append(.{ .int = .{ .size = 4, .signed = true } });
+        try result.types.append(.{ .int = .{ .size = 4, .signed = false } });
+        try result.types.append(.{ .int = .{ .size = 8, .signed = true } });
+        try result.types.append(.{ .int = .{ .size = 8, .signed = false } });
+
+        try result.types.append(.{ .int = .{ .size = 16, .signed = true } });
+        try result.types.append(.{ .int = .{ .size = 16, .signed = false } });
+        try result.types.append(.{ .float = 4 });
+        try result.types.append(.{ .float = 8 });
+        try result.types.append(.void);
+
+        try result.types.append(.noreturn);
+        // Integer
+        try result.types.append(.{ .int = .{ .size = 0, .signed = true } });
+        // Real
+        try result.types.append(.{ .float = 0 });
+        try result.types.append(.Type);
+
+        return result;
     }
 
-    // UNCOMPLETED
-    pub fn fieldLenOf(_: TypePool, type_index: u32) u16 {
-        return switch (type_index) {
-            permitive_types.get("null").?,
-            permitive_types.get("bool").?,
-            permitive_types.get("i8").?,
-            permitive_types.get("u8").?,
-            permitive_types.get("char").?,
-            permitive_types.get("i16").?,
-            permitive_types.get("u16").?,
-            permitive_types.get("i32").?,
-            permitive_types.get("u32").?,
-            permitive_types.get("f32").?,
-            permitive_types.get("Type").?,
-            permitive_types.get("i64").?,
-            permitive_types.get("u64").?,
-            permitive_types.get("i128").?,
-            permitive_types.get("Integer").?,
-            permitive_types.get("Real").?,
-            => 0,
-            permitive_types.get("Ref").? => 1,
-
-            else => return 8,
-        };
+    pub fn dumpType(self: TypePool, type_index: u32, writer: anytype) !void {
+        const type_ = self.types.items[type_index];
+        try writer.print("{any}", .{type_});
     }
 
-    pub fn typeEql(_: TypePool, x: [*]u8, y: [*]u8) bool {
-        return gc.MetaData.metaOf(x).type_index == gc.MetaData.metaOf(y).type_index;
+    pub fn addType(self: *TypePool, type_: Type) !Index {
+        const index = self.types.items.len;
+        try self.types.append(type_);
+        return @intCast(index);
+    }
+
+    pub fn deinit(self: *TypePool) void {
+        self.types.deinit();
+    }
+
+    // TODO
+    pub fn typeEql(_: TypePool, a: Index, b: Index) bool {
+        if (a == b) return true;
+
+        return false;
     }
 };
 
 pub const Type = union(enum) {
-    Any,
+    Any: struct {},
     Trait,
     Impl,
     Type,
     Object,
     int: struct { size: u8, signed: bool },
     float: u8,
+    char,
+    str,
     void,
     noreturn,
-    // to the struct description
-    struct_: u64,
-    // to the enum description
-    enum_: u64,
-    // to the union description
-    union_: u64,
-    // to the module description
-    mod: u64,
-    // to the function description
-    function: u64,
-    // to the effect description
-    effect: u64,
+    struct_,
+    enum_,
+    union_,
+    mod,
+    function,
+    effect,
 
     optional: u32,
     effectful: u64,
@@ -97,30 +90,13 @@ pub const Type = union(enum) {
 
     // Slice<u8> -> [to_slice, 1, to_u8]
     // Slice: pure fn<T> -> Type
-    compose: u64,
+    mapping: struct { func: [*]u8, args: [][*]u8, optional_args: [][*]u8 },
 };
 
-pub const permitive_types = std.StaticStringMap(u32).initComptime(.{
-    .{ "null", 0 },
-    .{ "bool", 1 },
-    .{ "i8", 2 },
-    .{ "i16", 3 },
-    .{ "i32", 4 },
-    .{ "i64", 5 },
-    .{ "i128", 6 },
-    .{ "u8", 7 },
-    .{ "u16", 8 },
-    .{ "u32", 9 },
-    .{ "u64", 10 },
-    .{ "u128", 11 },
-    .{ "Integer", 12 },
-    .{ "f32", 13 },
-    .{ "f64", 14 },
-    .{ "Real", 15 },
-    .{ "char", 16 },
-    .{ "str", 17 },
-    .{ "Object", 18 },
-    .{ "List", 19 },
-    .{ "Type", 20 },
-    .{ "Ref", 21 },
-});
+pub const Index = u32;
+
+const StructField = struct {
+    name: string_pool.Index,
+    type: Type,
+    default_value: ?[*]u8,
+};

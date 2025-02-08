@@ -16,6 +16,7 @@ pub fn tryDefinition(self: *Parser) Err!u64 {
     const next = self.peekToken();
     return switch (next.tag) {
         .k_fn => tryFn(self),
+        .k_effect => tryEffect(self),
         .k_impl => tryImpl(self),
         .k_pub => tryPub(self),
         .k_struct => tryStruct(self),
@@ -123,6 +124,7 @@ pub fn tryClauses(self: *Parser) Err!u64 {
     // .id (: expr)? (= expr')?
     // id :- expr
     // .id :- expr
+    // requires expr
     while (true) {
         if (self.peek(&.{ .id, .@":-" })) {
             const id = try basic.tryId(self);
@@ -148,8 +150,6 @@ pub fn tryClauses(self: *Parser) Err!u64 {
                 value_expr = try self.tryExpr();
             }
             try nodes.append(try self.pushNode(.{ Tag.clause, id, type_expr, value_expr }));
-            if (self.peek(&.{.@"{"})) break;
-            try self.expectNextToken(.@",", "expect a `,` to separate clauses");
         } else if (self.peek(&.{ .@".", .id })) {
             _ = self.nextToken();
             const symbol = try self.pushAtom(.symbol);
@@ -163,10 +163,14 @@ pub fn tryClauses(self: *Parser) Err!u64 {
             }
             try nodes.append(try self.pushNode(.{ Tag.clause, symbol, type_expr, value_expr }));
             if (self.peek(&.{.@"{"})) break;
-            try self.expectNextToken(.@",", "expect a `,` to separate clauses");
         } else {
-            break;
+            if (!self.eatToken(.k_requires)) break;
+            const expr = try expr_module.tryExpr(self, .{ .no_object_call = true });
+            if (expr == 0) return self.unexpectedToken("expected a predicate expression");
+            try nodes.append(try self.pushNode(.{ Tag.requires_predicate, expr }));
         }
+
+        if (!self.eatToken(.@",")) break;
     }
 
     return try self.pushNode(.{ Tag.clauses, nodes.items });
@@ -244,14 +248,20 @@ pub fn tryOptionalTraitParam(self: *Parser) Err!u64 {
     return 0;
 }
 
-// pattern (: expr)?
-pub fn pParam(self: *Parser) Err!u64 {
+// pattern : expr
+pub fn tryParam(self: *Parser) Err!u64 {
     try self.enter();
     defer self.exit();
+
+    self.sync();
     const pattern = try self.tryPattern();
     var type_expr: u64 = 0;
     if (self.eatToken(.@":"))
-        type_expr = try self.tryExpr();
+        type_expr = try self.tryExpr()
+    else {
+        self.fallback();
+        return 0;
+    }
 
     return try self.pushNode(.{ Tag.@"pattern : expr", pattern, type_expr });
 }
@@ -275,7 +285,8 @@ pub fn tryTrait(self: *Parser) Err!u64 {
     return try self.pushNode(.{ Tag.trait_def, id, clauses, block });
 }
 
-// fn name? (args) (->expr)? clauses? (block | ;)
+// fn name? (args) (->expr)? clauses? block?
+// fn name? <args> (->expr)? clauses? block?
 fn tryFn(self: *Parser) Err!u64 {
     try self.enter();
     defer self.exit();
@@ -285,8 +296,7 @@ fn tryFn(self: *Parser) Err!u64 {
     var clauses: u64 = 0;
     var block_or_expr: u64 = 0;
 
-    if (self.peek(&.{.id}))
-        name = try self.pushAtom(.id);
+    name = try basic.tryId(self);
 
     const rules = .{
         basic.rule("self", trySelf),
@@ -294,9 +304,17 @@ fn tryFn(self: *Parser) Err!u64 {
         basic.rule("optional trait refined parameters", tryOptionalTraitParam),
         basic.rule("optional parameter", tryOptionalParam),
         basic.rule("trait refined parameters", tryTraitParam),
-        basic.rule("parameter", pParam),
+        basic.rule("parameter", tryParam),
+        basic.rule("expression", Parser.tryExpr),
     };
-    const args = try basic.pMulti(self, rules, .@"(");
+    var args: std.ArrayList(u64) = undefined;
+    var tag: Tag = .fn_def;
+    if (self.peek(&.{.@"("}))
+        args = try basic.pMulti(self, rules, .@"(")
+    else {
+        tag = .diamond_fn_def;
+        args = try basic.pMulti(self, rules, .@"<");
+    }
     defer args.deinit();
 
     if (self.eatToken(.@"->"))
@@ -305,10 +323,41 @@ fn tryFn(self: *Parser) Err!u64 {
     clauses = try tryClauses(self);
 
     block_or_expr = try stmt.tryBlock(self);
-    if (block_or_expr == 0)
-        try self.expectNextToken(.@";", "expect a block or `;` after function declaration");
 
-    return try self.pushNode(.{ Tag.fn_def, name, return_type, clauses, block_or_expr, args.items });
+    return try self.pushNode(.{ tag, name, return_type, clauses, block_or_expr, args.items });
+}
+
+// effect name? (args) (->expr)? clauses? block?
+fn tryEffect(self: *Parser) Err!u64 {
+    try self.enter();
+    defer self.exit();
+    if (!self.eatToken(.k_effect)) return 0;
+    var name: u64 = 0;
+    var return_type: u64 = 0;
+    var clauses: u64 = 0;
+    var block_or_expr: u64 = 0;
+
+    name = try basic.tryId(self);
+
+    const rules = .{
+        basic.rule("self", trySelf),
+        basic.rule("rest parameters", tryRestParams),
+        basic.rule("optional trait refined parameters", tryOptionalTraitParam),
+        basic.rule("optional parameter", tryOptionalParam),
+        basic.rule("trait refined parameters", tryTraitParam),
+        basic.rule("parameter", tryParam),
+        basic.rule("expression", Parser.tryExpr),
+    };
+    var args: std.ArrayList(u64) = try basic.pMulti(self, rules, .@"(");
+
+    defer args.deinit();
+
+    if (self.eatToken(.@"->"))
+        return_type = try self.tryExpr();
+
+    clauses = try tryClauses(self);
+    block_or_expr = try stmt.tryBlock(self);
+    return try self.pushNode(.{ Tag.effect_def, name, return_type, clauses, block_or_expr, args.items });
 }
 
 // enum id? clauses? enum_def_body

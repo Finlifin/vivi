@@ -1,10 +1,35 @@
-struct Node
-where T
-{
-    data: T,
-    next: ?Node<T>,
-    prev: ?Node<T>,
+mod A {
+    fn increment() {
+        B.a += 1;
+    }
+
+    fn map(monad: ?T, f: fn(T) -> U) -> ?U
+    where T, U, requires is_debug_mode()
+    {
+        if monad is {
+            some? => f(some),
+            null => null,
+        }
+    }
+
+    effect Yield() -> T where T;
+
+    -- const ParseFn: Type = fn(Parser) -> !Err usize where Parser:- Parse + ?Sized;
 }
 
-derive Debug, Eq, Hash for Node<T>
-where T:- Debug + Eq + Hash;
+mod B {
+    let a: usize = 0;
+    const N = 23;
+    mod C {
+
+        mod D {    
+            mod E {
+                const len = 100;
+                const N = len;
+                mod H {}
+            }
+        }
+        mod Well {}
+    }
+}
+

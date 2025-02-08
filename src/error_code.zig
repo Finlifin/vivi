@@ -8,12 +8,17 @@
 
 pub fn errorMsg(code: GlobalErr) ?[]const u8 {
     return switch (code) {
-        .UnableToRecognizeStringLiteral => "unable to recognize string literal",
-        .UnableToRecognizeArbitraryIdentifier => "unable to recognize arbitrary identifier",
+        .InvalidStringLiteral => "unable to recognize string literal",
+        .InvalidArbitraryIdentifier => "unable to recognize arbitrary identifier",
+        .InvalidIntegerLiteral => "unable to recognize integer literal",
+        .InvalidFloatLiteral => "unable to recognize float literal",
+        .InvalidCharLiteral => "unable to recognize char literal",
 
         .UnexpectedToken => "unexpected token",
         .InvalidExpr => "invalid expression",
         .InvalidPattern => "invalid pattern",
+
+        .UnknownIdentifier => "unknown identifier",
 
         .FileNotFound => "file not found",
 
@@ -41,14 +46,20 @@ pub const Kind = enum {
 };
 
 pub const GlobalErr = enum(u32) {
-    // while lexing
-    UnableToRecognizeStringLiteral = 10_000_001,
-    UnableToRecognizeArbitraryIdentifier = 10_000_002,
+    // while lexing or extracting tokens
+    InvalidStringLiteral = 10_000_001,
+    InvalidArbitraryIdentifier = 10_000_002,
+    InvalidIntegerLiteral = 10_000_003,
+    InvalidFloatLiteral = 10_000_004,
+    InvalidCharLiteral = 10_000_005,
 
     // while parsing
     UnexpectedToken = 10_001_001,
     InvalidExpr = 10_001_002,
     InvalidPattern = 10_001_003,
+
+    // while analyzing
+    UnknownIdentifier = 20_000_001,
 
     FileNotFound = 30_000_001,
 
