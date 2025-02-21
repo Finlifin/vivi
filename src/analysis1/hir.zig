@@ -4,6 +4,7 @@ const std = @import("std");
 const ast = @import("../parser/ast.zig");
 
 const gc = @import("gc.zig");
+const Ref = gc.Ref;
 
 pub const Tag = enum(u32) {
     root,
@@ -35,9 +36,11 @@ pub const ModDef = struct {
     name: string_pool.Index,
     type_index: type_pool.Index,
     ast_node: u64,
-    parent: ?[*]u8,
-    children: [*]u8,
     impls: void,
+    parent: Ref,
+    children: Ref,
+
+    pub const tag = Tag.mod_def;
 
     comptime {
         std.debug.assert(@sizeOf(ModDef) == 40);
@@ -63,9 +66,9 @@ pub const ConstDef = struct {
     name: string_pool.Index,
     type_index: type_pool.Index,
     ast_node: u64,
-    parent: ?[*]u8,
-    type: ?[*]u8,
-    value: ?[*]u8,
+    parent: Ref,
+    type: Ref,
+    value: Ref,
 
     pub fn at(obj: [*]u8) *ConstDef {
         return @as(*ConstDef, @alignCast(@ptrCast(obj)));
@@ -91,8 +94,8 @@ pub const Root = struct {
 };
 
 pub const Children = struct {
-    pub fn resolve(children: [*]u8, name: string_pool.Index) ?*Entry {
-        for (Entry.entries(children)) |*entry| {
+    pub fn resolve(children: [*]u8, name: string_pool.Index) ?*Symbol {
+        for (Symbol.entries(children)) |*entry| {
             if (entry.name == name) return entry;
         }
 
@@ -101,33 +104,33 @@ pub const Children = struct {
 
     pub fn new(
         gc_: *gc.Gc,
-        entries: []Entry,
+        entries: []Symbol,
     ) ![*]u8 {
         const meta = gc.MetaData.init(0, @intCast(entries.len), Tag.children);
         const children = try gc_.new(meta);
 
-        @memcpy(Entry.entries(children), entries);
+        @memcpy(Symbol.entries(children), entries);
 
         return children;
     }
 
-    pub const Entry = struct {
+    pub const Symbol = struct {
         name: string_pool.Index,
         ast_node: u64,
         obj: ?[*]u8,
 
-        pub fn at(obj: [*]u8) *Entry {
-            return @as(*Entry, @alignCast(@ptrCast(obj)));
+        pub fn at(obj: [*]u8) *Symbol {
+            return @as(*Symbol, @alignCast(@ptrCast(obj)));
         }
 
-        pub fn entries(obj: [*]u8) []Entry {
-            const meta = gc.MetaData.at(obj);
-            const base = @as([*]Entry, @alignCast(@ptrCast(obj)));
+        pub fn entries(obj: [*]u8) []Symbol {
+            const meta = gc.MetaData.of(obj);
+            const base = @as([*]Symbol, @alignCast(@ptrCast(obj)));
             return base[0..meta.field_len];
         }
 
         comptime {
-            std.debug.assert(@sizeOf(Entry) == 24);
+            std.debug.assert(@sizeOf(Symbol) == 24);
         }
     };
 };
@@ -142,9 +145,9 @@ pub const Item = struct {
         return @as(*Item, @alignCast(@ptrCast(obj)));
     }
 
-    pub fn resolve(obj: [*]u8, name: string_pool.Index) ?*Children.Entry {
-        const meta = gc.MetaData.at(obj);
-        var result: ?*Children.Entry = null;
+    pub fn resolve(obj: [*]u8, name: string_pool.Index) ?*Children.Symbol {
+        const meta = gc.MetaData.of(obj);
+        var result: ?*Children.Symbol = null;
         switch (meta.tag) {
             .root => {
                 const root = Root.at(obj);

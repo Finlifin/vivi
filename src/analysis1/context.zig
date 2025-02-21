@@ -25,7 +25,7 @@ pub const Context = struct {
         return self.stack.items[self.stack.items.len - 1];
     }
 
-    pub inline fn resolve(self: *Context, name: string_pool.Index) ?*hir.Children.Entry {
+    pub inline fn resolve(self: *Context, name: string_pool.Index) ?*hir.Children.Symbol {
         return hir.Item.resolve(self.current(), name);
     }
 
@@ -41,7 +41,7 @@ pub const Context = struct {
         result.root = try result.gc.new(meta);
         const builtins = try result.gc.new(gc_mod.MetaData.init(0, 2, .children));
         hir.Root.at(result.root).children = builtins;
-        const builtins_entries = hir.Children.Entry.entries(builtins);
+        const builtins_entries = hir.Children.Symbol.entries(builtins);
         builtins_entries[0].name = try result.sp.put("Integer");
         builtins_entries[0].obj = try result.gc.new(gc_mod.MetaData.init(0, 0, .unit));
         builtins_entries[1].name = try result.sp.put("Real");
